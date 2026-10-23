@@ -1,0 +1,12 @@
+# ComfyUI already provides torch, torchvision and numpy; they are deliberately
+# not listed so pip never swaps them. No upper pins: this pack runs on
+# numpy 2.x and transformers 5.x (see README, "Differences from upstream").
+opencv-python>=4.8
+transformers>=4.57
+timm>=1.0
+safetensors>=0.6
+huggingface-hub>=0.36
+einops>=0.8
+scipy>=1.11
+pillow>=10
+tqdm>=4.66
