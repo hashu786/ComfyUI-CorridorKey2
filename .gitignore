@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 # Model weights are downloaded on first run; never commit them.
-models/
+/models/
 *.safetensors
 *.pt
 *.npz
