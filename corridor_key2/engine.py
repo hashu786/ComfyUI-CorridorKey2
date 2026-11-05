@@ -73,6 +73,79 @@ def _ensure_utils3d() -> None:
         log("utils3d not installed; using an import stub (not needed for keying).")
 
 
+class _LooseVersion:
+    """Minimal stand-in for distutils.version.LooseVersion (removed in Python 3.12)."""
+
+    def __init__(self, vstring: str):
+        import re
+
+        self.vstring = str(vstring)
+        self.version = [int(p) if p.isdigit() else p
+                        for p in re.split(r"(\d+|[a-z]+|\.)", self.vstring.lower())
+                        if p and p != "."]
+
+    def _key(self, other):
+        other = other if isinstance(other, _LooseVersion) else _LooseVersion(other)
+        a = [(0, x) if isinstance(x, int) else (-1, x) for x in self.version]
+        b = [(0, x) if isinstance(x, int) else (-1, x) for x in other.version]
+        return a, b
+
+    def __eq__(self, other):
+        a, b = self._key(other)
+        return a == b
+
+    def __lt__(self, other):
+        a, b = self._key(other)
+        return a < b
+
+    def __le__(self, other):
+        a, b = self._key(other)
+        return a <= b
+
+    def __gt__(self, other):
+        a, b = self._key(other)
+        return a > b
+
+    def __ge__(self, other):
+        a, b = self._key(other)
+        return a >= b
+
+    def __str__(self):
+        return self.vstring
+
+    def __repr__(self):
+        return f"LooseVersion('{self.vstring}')"
+
+
+def _ensure_distutils() -> None:
+    """C-RADIO's extra_models.py does `from distutils.version import LooseVersion`.
+
+    distutils was removed from Python 3.12. setuptools normally provides a copy;
+    when it isn't installed, register a tiny stub so the import succeeds. The
+    code path that uses LooseVersion (PaliGemma) is never run by CorridorKey.
+    """
+    try:
+        from distutils.version import LooseVersion  # noqa: F401
+        return
+    except Exception:
+        pass
+    try:
+        import setuptools  # noqa: F401  (installs its distutils shim)
+        from distutils.version import LooseVersion  # noqa: F401,F811
+        return
+    except Exception:
+        pass
+    distutils_mod = sys.modules.get("distutils") or types.ModuleType("distutils")
+    version_mod = types.ModuleType("distutils.version")
+    version_mod.LooseVersion = _LooseVersion
+    version_mod.StrictVersion = _LooseVersion
+    distutils_mod.version = version_mod
+    distutils_mod.__path__ = []
+    sys.modules["distutils"] = distutils_mod
+    sys.modules["distutils.version"] = version_mod
+    log("distutils not available (Python 3.12+ without setuptools); using a small stub.")
+
+
 # ---------------------------------------------------------------------------
 # C-RADIO loader that does not depend on transformers' from_pretrained
 # ---------------------------------------------------------------------------
@@ -99,7 +172,14 @@ def _import_cradio_module(repo_path: Path):
             raise RuntimeError(f"Could not import C-RADIO module at {hf_model_path}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            # Don't leave a half-imported module behind: upstream's loader would
+            # pick it up and fail with a misleading "no attribute RADIOConfig".
+            for name in [n for n in sys.modules if n.startswith(package_name + ".")]:
+                sys.modules.pop(name, None)
+            raise
     return module
 
 
@@ -336,6 +416,7 @@ def get_model(status=None):
         if status is not None:
             status("loading model")
         _ensure_utils3d()
+        _ensure_distutils()
         _patch_cradio_loader()
         env_keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
         saved_env = {k: os.environ.get(k) for k in env_keys}
